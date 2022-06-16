@@ -1,0 +1,527 @@
+---
+title: "NucSeq Analysis"
+author: "Eric Vaughn"
+date: "5/25/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, eval = F)
+```
+
+
+## Load Libraries
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(Matrix)
+library(ggplot2)
+library(future)
+library(ggplot2)
+
+# setup future settings
+plan(multiprocess, workers = 16)
+# allow future access to 200GBs of ram
+options(future.globals.maxSize = 12* 1024^3)
+```
+
+## Load in data from P28 and Adults
+
+
+```{r}
+
+#setwd("C:/Users/Eric Vaughn/Dropbox/Sequencing/PAG/Final SC")
+setwd("A:/Dropbox/Sequencing/PAG/Final SC")
+
+# p28 PAG
+r1a = Read10X(data.dir = "C:/Users/Eric Vaughn/Dropbox/Sequencing/PAG/P28/p28neg w introns/filtered_matrices_mex/mm10-1.2.0_premrna")
+r1 = CreateSeuratObject(counts = r1a)
+r1b = Read10X(data.dir = "C:/Users/Eric Vaughn/Dropbox/Sequencing/PAG/P28/p28pos w introns/filtered_gene_bc_matrices/mm10-1.2.0_premrna")
+r1b = CreateSeuratObject(counts = r1b)
+p28 = merge(r1, r1b, add.cell.ids = c('r1a','r1b'))
+p28$batch = 'b1'
+p28.data = Read10X(data.dir = "C:/Users/Eric Vaughn/Dropbox/Sequencing/PAG/P28/Poolv2/filtered_gene_bc_matrices/mm10-1.2.0_premrna")
+p28b = CreateSeuratObject(counts = p28.data)
+p28b$batch = 'b2'
+p28 = merge(p28, p28b, add.cell.ids = c('b1','b2'))
+p28$age = 'p28'
+
+# adult PAG
+
+Pos1.data = Read10X(data.dir = "C:/Users/Eric Vaughn/Dropbox/Sequencing/PAG/P53 Nuc/Pos1/filtered_matrices_mex/mm10-1.2.0_premrna")
+Pos2.data = Read10X(data.dir = "C:/Users/Eric Vaughn/Dropbox/Sequencing/PAG/P53 Nuc/Pos2/filtered_matrices_mex/mm10-1.2.0_premrna")
+Pos3.data = Read10X(data.dir = "C:/Users/Eric Vaughn/Dropbox/Sequencing/PAG/P53 Nuc/Pos3/filtered_matrices_mex/mm10-1.2.0_premrna")
+Neg1.data = Read10X(data.dir = "C:/Users/Eric Vaughn/Dropbox/Sequencing/PAG/P53 Nuc/Neg1/filtered_matrices_mex/mm10-1.2.0_premrna")
+r1 = list(Pos1.data,Pos2.data,Pos3.data,Neg1.data)
+r1 = do.call(cbind, r1)
+r1 = CreateSeuratObject(r1)
+r1$batch = 'ad_b1'
+
+P51.data = Read10X(data.dir = "C:/Users/Eric Vaughn/Dropbox/Sequencing/PAG/P51/Pooledv2/filtered_gene_bc_matrices/mm10-1.2.0_premrna")
+r2 = CreateSeuratObject(P51.data)
+r2$batch = 'ad_b2'
+
+
+ad = merge(r1,r2, add.cell.ids = c('p53','p51'))
+ad$age = 'adult'
+
+# merge adult and p28 data
+
+pag = merge(p28,ad)
+
+```
+
+## Perform updated analysis
+
+This analysis differs slightly from the initial analysis because it is being done with v3 Seurat. Because this analysis was done so long ago with various merged datasets and messier code, I'm choosing to redo this analysis in a cleaner way that should mostly replicate the initial results.
+
+
+```{r, echo=F}
+
+# load in important gene sets
+mito.genes = as.vector(read.csv("C:/Users/Eric Vaughn/Dropbox/Sequencing/Gene Lists/mito.genes.csv", header = F, stringsAsFactors = F))[,1] # mito.carta and mt- genes
+
+ribo.genes = as.vector(read.csv("C:/Users/Eric Vaughn/Dropbox/Sequencing/Gene Lists/ribo.genes.csv", header = F, stringsAsFactors = F))[,1] # Rpl- and Rps- genes
+
+sex.linked = c('Xist','Ddx3y','Uty','Eif2s3y','Kdm5d')
+
+# Define apoptotic genes
+apoptotic.genes = c("Apaf1","Cycs","Bax","Tnf","Hspa2","Junb")
+
+# Define immediate early genes (neurons) to regress out
+IEG.genes = c("Fos","Npas4","Arc","Jun","Egr1",'Junb','Nr4a1')
+
+# Find red blood cells
+RBC.genes = grep("^Hba-|^Hbb-", rownames(pag), value = T)
+
+pag = PercentageFeatureSet(pag, features = mito.genes, col.name = 'percent.mito')
+pag = PercentageFeatureSet(pag, features = ribo.genes, col.name = 'percent.ribo')
+pag = PercentageFeatureSet(pag, features = IEG.genes, col.name = 'percent.ieg')
+pag = PercentageFeatureSet(pag, features = RBC.genes, col.name = 'percent.rbc')
+pag = PercentageFeatureSet(pag, features = apoptotic.genes, col.name = 'percent.apoptotic')
+
+
+# Normalize
+
+pag = NormalizeData(pag)
+
+pag = subset(pag, subset = nCount_RNA >500 & nCount_RNA < 40000 & percent.mito < 10 & percent.ribo <1 & percent.rbc< 2 & percent.apoptotic < .2 & percent.ieg < .2)
+
+
+
+# Find variable features
+pag = FindVariableFeatures(pag)
+
+# remove problematic genes from variable features
+genes = setdiff(pag@assays$RNA@var.features,
+                c(mito.genes,ribo.genes, apoptotic.genes, IEG.genes, RBC.genes, sex.linked))
+length(genes) # 1932 genes
+
+```
+
+## Scale and Cluster Data for all cells
+
+```{r, echo=F}
+pag = ScaleData(pag, model.use = 'linear', features = genes, 
+                vars.to.regress = c('nCount_RNA','percent.mito','percent.ribo','age','batch'))
+pag = RunPCA(pag,pcs.compute = 50, verbose = TRUE, features = genes) # Increase maxit if PCA does not converge
+plan(sequential)
+pag = FindNeighbors(pag, dims = 1:50, reduction = 'pca', k.param = 21)
+pag = FindClusters(pag, algorithm = 3, resolution = c(0.6,0.8,1), n.start = 20)
+pag = RunUMAP(pag, dims = 1:50, n.neighbors = 21, min_dist = .1, max.dim = 2, reduction.name = 'umap')
+
+```
+
+```{r Plot UMAP}
+DimPlot(pag, reduction = 'umap',label = F, pt.size = 1) + NoLegend()
+```
+
+
+## Define major cell types
+```{r Major Cell Types}
+
+load('C:/Users/Eric Vaughn/Dropbox/Sequencing/PAG/Final SC/pag.RObj')
+# get average expression for each cluster
+
+pag.markers = data.frame(t(pag@assays$RNA@scale.data), cl = pag$RNA_snn_res.1)
+pag.markers = pag.markers %>% group_by(cl) %>% summarise_at(colnames(pag.markers)[colnames(pag.markers)!='cl'], mean) %>% tibble::column_to_rownames('cl')%>% select(colnames(pag.markers)[colnames(pag.markers)!='cl']) %>% t()
+
+# build a tree so splitting major types is easier as they should be relatively grouped
+
+h = hclust(dist(t(pag.markers)))
+
+# rename clusters to reflect order in dendrogram
+
+pag$tree = plyr::mapvalues(pag$RNA_snn_res.1, from = h$labels[h$order], to = 1:length(h$labels[h$order]))
+colnames(pag.markers) = plyr::mapvalues(colnames(pag.markers), from = h$labels[h$order], to = 1:length(h$labels[h$order]))
+
+h = hclust(dist(t(pag.markers)))
+plot(h) # should be 1 --> 64
+
+g = c('Snap25','Slc17a6','Slc32a1','Slc17a8','Chat','Th','Dbh','Gad2','Slc17a7','Slc1a3','Agt','Qk','Mbp','Bmp4','Hepacam','Cldn5','Lum','Dcn','Cspg4','Pdgrfb','Vtn','Inpp5d','Csf1r')
+g = intersect(rownames(pag.markers),g)
+AvHeat(pag.markers[g,], gene.order = g, fill.val = 'expression')
+
+types = list(Ast = 3:8,
+             Olig = c(9:13,11),
+             OPC = 18,
+             NFO = c(17,19),
+             MG = 24,
+             Epend = 14,
+             Mural = 16,
+             Thal = c(29,30),
+             Cer = c(1,2,27,37,25),
+             M.Hab = 31,
+             rlRaphe = 21,
+             dRaphe = 22,
+             vlLoco = 15,
+             doublet = c(38,39))
+types$PAG = setdiff(as.numeric(as.character(unique(pag$tree))),unlist(types))
+
+
+
+ord = unlist(lapply(names(types), function(x) rep(x,length(types[[x]]))))
+pag$type = plyr::mapvalues(pag$tree, from = unlist(types),to = ord )
+
+Idents(pag) = 'type'
+pag = subset(pag, idents = 'doublet', invert = T)
+
+```
+38 seems to have an abnormal enrichment in mitochondrial genes while 39 has poor definition and groups with oligodendrocytes.
+```{r Plot Types}
+DimPlot(pag, group.by = 'type')
+
+```
+
+I'll analyze neurons that should be part of our MERFISH imaged zone here, leaving out thalamus and cerebellum, which are included in MERFISH image, but are essentially identified by few genes and tossed out.
+
+```{r Analyze PAG Neurons}
+
+n = subset(pag, idents = c('PAG','dRaphe','rlRaphe','vlLoco'))
+
+n = FindVariableFeatures(n)
+
+genes = setdiff(n@assays$RNA@var.features,
+                c(mito.genes,ribo.genes, apoptotic.genes, IEG.genes, RBC.genes, sex.linked))
+
+n = ScaleData(n, model.use = 'linear', features = genes, 
+                vars.to.regress = c('nCount_RNA','percent.mito','percent.ribo','age','batch'))
+n = RunPCA(n, npcs = 60, verbose = TRUE, features = genes) 
+n = FindNeighbors(n, dims = 1:60, reduction = 'umap', k.param = 15)
+plan(multiprocess)
+n = FindClusters(n, algorithm = 3, resolution = c(1,1.2), n.start = 10)
+n = RunUMAP(n, dims = 1:60, n.neighbors = 15, min_dist = .01, n.components = 2, reduction.name = 'umap', 
+            n.epochs = 1000)
+
+```
+
+```{r Plot PAG Neurons}
+DimPlot(n, label = T) + NoLegend()
+
+```
+
+Separate inhib and excit neurons
+```{r Separate PAG Neurons}
+
+g = c('Slc17a6','Slc17a7','Slc17a8','Slc32a1','Gad1','Gad2','Chat','Th','Tph2','Dbh','Hepacam','Mog')
+n.markers = data.frame(t(as.matrix(n@assays$RNA@data[g,])), cl = n$RNA_snn_res.1.2)
+n.markers = n.markers %>% group_by(cl) %>% summarise_at(colnames(n.markers)[colnames(n.markers)!='cl'], mean) %>% tibble::column_to_rownames('cl')%>% select(colnames(n.markers)[colnames(n.markers)!='cl']) %>% t()
+
+# build a tree so splitting major types is easier as they should be relatively grouped
+
+h = hclust(dist(t(n.markers)))
+
+# rename clusters to reflect order in dendrogram
+
+n$tree = plyr::mapvalues(n$RNA_snn_res.1.2, from = h$labels[h$order], to = 1:length(h$labels[h$order]))
+colnames(n.markers) = plyr::mapvalues(colnames(n.markers), from = h$labels[h$order], to = 1:length(h$labels[h$order]))
+
+h = hclust(dist(t(n.markers)))
+plot(h) # should be 1 --> 58
+
+AvHeat(n.markers[g,], gene.order = g, fill.val = 'expression')
+
+n = subset(n, subset = Slc1a3<1 | Mog<1.5) # clean up some junk looking cells
+n = subset(n, idents = 3, invert = T)
+
+n = PercentageFeatureSet(n, features = c('Slc32a1','Gad1','Gad2'), col.name = 'percent.i')
+n = PercentageFeatureSet(n, features = c('Slc17a6','Slc17a7','Slc17a8'), col.name = 'percent.e')
+
+VlnPlot(n, features = c('percent.i','percent.e'), pt.size = .1, ncol = 1)
+
+
+e = c(1,2,27:55)
+i = setdiff(1:58,e)
+
+FeatureScatter(e, 'Slc17a6', 'Slc32a1')
+
+i.cells = WhichCells(n, expression = Slc32a1>.5 & Slc17a6==0 & Slc17a7 == 0 & Slc17a8 == 0)
+i.cells = union(i.cells, WhichCells(n, idents = i))
+
+e.cells = WhichCells(n, expression = Slc32a1==0 & Gad2==0 & Gad1==0 & Slc17a6>.5 | Slc17a7 > .5 | Slc17a8 > .5)
+e.cells = union(e.cells, WhichCells(n, idents = e))
+
+DimPlot(n, cells.highlight = WhichCells(n, idents = i))
+
+DimPlot(n, cells.highlight = i.cells)
+
+DimPlot(n, cells.highlight = WhichCells(n, idents = e))
+
+DimPlot(n, cells.highlight = e.cells)
+
+DimPlot(n, label = T) + NoLegend()
+
+
+
+```
+
+30 is rlRaphe (Ucn, Cartpt, Postn). 27 and 28 are Chat and will go with Excit. Dopaminergic will go with inhib.
+3 looks to be an odd Oligo marker rich cluster. Filter before the next steps.
+
+
+```{r Analyze PAG inhibitory neurons}
+Idents(n) = 'tree'
+plan(multiprocess)
+
+i = subset(n, idents = setdiff(i,3))
+
+i = FindVariableFeatures(i)
+
+genes = setdiff(i@assays$RNA@var.features,
+                c(mito.genes,ribo.genes, apoptotic.genes, IEG.genes, RBC.genes, sex.linked))
+
+i= ScaleData(i, model.use = 'linear', features = genes, 
+                vars.to.regress = c('nCount_RNA','percent.mito','percent.ribo','age','batch'))
+i= RunPCA(i, npcs = 60, verbose = TRUE, features = genes) 
+i = RunUMAP(i, dims = 1:60, n.neighbors = 15, min_dist = .01, n.components = 2, reduction.name = 'umap', 
+            n.epochs = 1000)
+plan(sequential)
+i= FindNeighbors(i, dims = 1:2, reduction = 'umap', k.param = 15)
+plan(multiprocess)
+i = FindClusters(i, algorithm = 3, resolution = c(.2,.3,.4), n.start = 10)
+DimPlot(i, label = T) + NoLegend()
+
+i.markers = FindAllMarkers(i, logfc.threshold = .5, max.cells.per.ident = 300)
+
+e.from.i = c(0,1,4,5,10,12,18,37,51)
+
+
+i = subset(i, cells = , invert = T)
+
+## redo analysis of i with those clusters removed (use more intensive negbinom model)
+
+i = FindVariableFeatures(i)
+
+genes = setdiff(i@assays$RNA@var.features,
+                c(mito.genes,ribo.genes, apoptotic.genes, IEG.genes, RBC.genes, sex.linked))
+
+i= ScaleData(i, model.use = 'negbinom', features = genes, 
+                vars.to.regress = c('nCount_RNA','percent.mito','percent.ribo','age','batch'))
+i= RunPCA(i, npcs = 70, verbose = TRUE, features = genes)
+i = JackStraw(i, dims = 70)
+i = ScoreJackStraw(i, dims = 1:70)
+JackStrawPlot(i, dims = 1:70)
+i = RunUMAP(i, dims = 1:70, n.neighbors = 15, min_dist = .01, n.components = 2, reduction.name = 'umap', 
+            n.epochs = 1000)
+plan(sequential)
+i= FindNeighbors(i, dims = 1:2, reduction = 'umap', k.param = 15, force.recalc = T)
+plan(multiprocess)
+i = FindClusters(i, algorithm = 3, resolution = c(.2,.3,.4,.5), n.start = 10)
+DimPlot(i, label = T) + NoLegend()
+
+i.markers = FindAllMarkers(i, logfc.threshold = .5, max.cells.per.ident = 300)
+
+
+```
+
+Several cells in i are excitatory and were not easily pulled out from the first round. These were identified using the Slc17 family as well as Cacna2d1 which is strongly expressed in all glutamatergic cells (and sparsely in inhibitory). Excitatory subset seems to have small pockets of Slc32a1/Gad2 positive cells, but these cells also express Slc17a6 and hence will be left in the excitatory cells.
+
+```{r Analyze PAG excitatory neurons, eval=F}
+Idents(n) = 'tree'
+
+e = subset(n, cells = Cells(i), invert = T)
+
+e = FindVariableFeatures(e)
+
+genes = setdiff(e@assays$RNA@var.features,
+                c(mito.genes,ribo.genes, apoptotic.genes, IEG.genes, RBC.genes, sex.linked))
+
+e = ScaleData(e, model.use = 'negbinom', features = genes, 
+                vars.to.regress = c('nCount_RNA','percent.mito','percent.ribo','age','batch'))
+e = RunPCA(e, npcs = 80, verbose = TRUE, features = genes)
+e = JackStraw(e, dims = 80)
+e = ScoreJackStraw(e, dims = 1:80)
+JackStrawPlot(e, dims = 1:80)
+e = RunUMAP(e, dims = 1:79, n.neighbors = 15, min_dist = .01, n.components = 3, reduction.name = 'umap', 
+            n.epochs = 1000)
+plan(sequential)
+e = FindNeighbors(e, dims = 1:2, reduction = 'umap', k.param = 15, graph.name = 'umap.snn')
+plan(multiprocess)
+e = FindClusters(e, algorithm = 3, resolution = c(.2,.3,.4,.5,.6,.7,.8), n.start = 10, graph.name = 'umap.snn')
+DimPlot(e, label = T) + NoLegend()
+
+e.markers = FindAllMarkers(e, logfc.threshold = .5, max.cells.per.ident = 200)
+
+
+# there are still gabaergic cells in clusters 22 and 23, 28, and 14, intermixed with glutamatergic cells so the cluster can't simply be moved
+
+i1 = WhichCells(e, idents = c(0,5,10,27,30), expression = Gad2>0 & Slc17a6 ==0)
+i2= WhichCells(e, idents = c(0,5,10,27,30), expression = Slc32a1>0 & Slc17a6 ==0)
+i.from.e = union(i1,i2)
+length(i.from.e)
+x = DimPlot(e, cells.highlight = i.from.e, pt.size = .5,sizes.highlight = .6)
+y = FeaturePlot(e, 'Slc17a6', order = T) 
+cowplot::plot_grid(x,y)
+
+# redo e removing inhibitory cells
+
+e = subset(e, cells = i.from.e, invert = T)
+e = FindVariableFeatures(e)
+
+genes = setdiff(e@assays$RNA@var.features, unlist(gene.list))
+
+plan('multiprocess')
+e = ScaleData(e, model.use = 'negbinom', features = genes, 
+                vars.to.regress = c('nCount_RNA','percent.mito','percent.ribo','age','batch'))
+e = RunPCA(e, npcs = 80, verbose = TRUE, features = genes)
+e = JackStraw(e, dims = 80)
+e = ScoreJackStraw(e, dims = 1:80)
+e = RunUMAP(e, dims = 1:80, n.neighbors = 15, min_dist = .01, n.components = 2, reduction.name = 'umap', 
+            n.epochs = 1000)
+plan(sequential)
+e = FindNeighbors(e, dims = 1:80, reduction = 'pca', k.param = 15, force.recalc = T, nn.method = 'annoy')
+plan(multiprocess)
+
+# clean up other clustering remnants
+e@meta.data = dplyr::select(e@meta.data, -contains('snn'))
+
+plan('multiprocess')
+e = FindClusters(e, algorithm = 4, resolution = c(1.2,1.4,1.5,1.6,1.7,1.8,1.9,2,2.1,2.2,2.3,2.4,2.5,2.6,2.7,2.8), 
+                 n.start = 100, n.iter = 100, method = 'igraph')
+
+# do stability test on cluster and find markers
+
+save(e,file = 'e.RObj')
+
+
+```
+
+```{r Find Markers for Stable Cluster Set}
+Idents(e) = 'stable'
+library(future)
+plan('multiprocess', workers = 16)
+
+e.markers = FindAllMarkers(e, logfc.threshold = .5, max.cells.per.ident = 200, test.use = 't')
+
+e.cells = Cells(e)
+
+save(e.cells, file = 'e.cells.R')
+save(e.markers,file = 'e.stable.markers.R')
+
+```
+
+
+```{r e Plots}
+JackStrawPlot(e, dims = 60:80)
+DimPlot(e, label = T) + NoLegend()
+
+```
+
+
+```{r Redo i analysis with cells added back}
+
+i.cells = union(Cells(i), i.from.e)
+i = subset(n, cells = i.cells)
+
+i = FindVariableFeatures(i)
+
+genes = setdiff(i@assays$RNA@var.features,
+                unlist(gene.list))
+plan(multiprocess)
+i= ScaleData(i, model.use = 'negbinom', features = genes, 
+                vars.to.regress = c('nCount_RNA','percent.mito','percent.ribo','age','batch'), block.size = 200)
+i= RunPCA(i, npcs = 80, verbose = TRUE, features = genes)
+i = JackStraw(i, dims = 80)
+i = ScoreJackStraw(i, dims = 1:80)
+JackStrawPlot(i, dims = 1:80)
+i = RunUMAP(i, dims = setdiff(1:80,76), n.neighbors = 11, min_dist = .01, n.components = 2, 
+            reduction.name = 'umap', n.epochs = 1000)
+plan(sequential)
+i= FindNeighbors(i, dims = setdiff(1:80,76), reduction = 'pca', k.param = 11, 
+                 force.recalc = T, graph.name = 'pca.snn')
+
+# cleanup meta data
+i@meta.data =i@meta.data %>% dplyr::select(-contains(c('cl','snn')))
+
+plan(multiprocess)
+i = FindClusters(i, algorithm = 4, resolution = c(1.4,1.5,1.6,1.7,1.8,1.9,2,2.1,2.2,2.3,2.4,2.5,2.6), 
+                 n.start = 100, n.iter = 100, method = 'igraph', group.singletons = T, graph.name = 'pca.snn',
+                 random.seed = 1)
+
+i$stable = factor(i$stable, levels = 
+                    levels(i$stable)[gtools::mixedorder(gsub('\\.',levels(i$stable), replacement = ''))], ordered = T)
+
+i.cells = Cells(i)
+save(i.cells, file = 'i.cells.R')
+save(i,file = 'i.RObj')
+
+```
+
+
+```{r Find Markers for Stable Cluster Set, eval=F}
+Idents(i) = 'stable'
+
+plan('multiprocess')
+
+i.markers = FindAllMarkers(i, logfc.threshold = .5, max.cells.per.ident = 200)
+
+save(i.markers,file = 'i.stable.markers.R')
+
+DT::datatable(i.markers)
+
+```
+
+
+```{r inhibitory Plots, dpi= 320}
+JackStrawPlot(i, dims = 60:80)
+DimPlot(i, label = T) + NoLegend()
+
+```
+## Make Plots for nucSeq Figures
+
+```{r Make Plots}
+
+Idents(e) = 'stable'
+Idents(i) = 'stable'
+
+
+  
+AvHeat(av, clust.order = c(levels(e$stable),levels(i$stable)), fill.val = 'expression', plotly = T)
+
+# try reordering so similar clusters are together
+
+hc = hclust(dist(t(av)))
+plot(hc)
+
+e.av = data.frame(rbind(t(e@assays$RNA@scale.data),t(i@assays$RNA@scale.data)), 
+                Cluster = c(as.character(e$stable), as.character(i$stable))) %>% group_by(Cluster) %>% 
+  summarise_at(.vars = e.plot, .funs = mean) %>% tibble::column_to_rownames('Cluster') %>% t()
+AvHeat(e.av, clust.order = hc$labels[hc$order], fill.val = 'expression', plotly = T)
+
+# make VlnPlots
+
+e.plot = e.markers %>% filter(avg_logFC>1 & p_val_adj<.05) %>% group_by(cluster) %>% top_n(2, avg_logFC) %>% group_by() %>% select(gene) %>% unique() %>% unlist()
+
+
+StackedVlnPlot(e, features = e.plot, pt.size = 0)
+
+i.plot = i.markers %>% filter(avg_logFC>1 & p_val_adj<.05) %>% group_by(cluster) %>% top_n(2, avg_logFC) %>% group_by() %>% select(gene) %>% unique() %>% unlist()
+
+
+StackedVlnPlot(i, features = i.plot, pt.size = 0)
+
+DotPlot(i, features = i.plot)
+
+
+```

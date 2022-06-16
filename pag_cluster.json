@@ -1,0 +1,152 @@
+{
+    "__default__" : {
+        "account" : "dulac_lab",
+        "time" : "100:00:00",
+        "n" : 1,
+        "partition" : "shared",
+        "mem" : 6000,
+        "out" : "~/Scratch/%j.stdout.txt",
+        "err" : "~/Scratch/%j.stderr.txt"
+    },
+    "FiducialCorrelationWarp" : {
+        "time" : "1:00:00",
+        "mem" : 2000
+    },
+    "DeconvolutionPreprocess" : {
+        "time" : "3:00:00",
+        "mem" : 2000
+    },
+    "Optimize1" : {
+        "time" : "6:00:00",
+        "mem" : 6000
+    },
+    "Optimize2" : {
+        "time" : "6:00:00",
+        "mem" : 6000
+    },
+    "Optimize3" : {
+        "time" : "6:00:00",
+        "mem" : 6000
+    },
+    "Optimize4" : {
+        "time" : "6:00:00",
+        "mem" : 6000
+    },
+    "Optimize5" : {
+        "time" : "6:00:00",
+        "mem" : 6000
+    },
+    "Optimize6" : {
+        "time" : "6:00:00",
+        "mem" : 6000
+    },
+    "Optimize7" : {
+        "time" : "6:00:00",
+        "mem" : 6000
+    },
+    "Optimize8" : {
+        "time" : "6:00:00",
+        "mem" : 6000
+    },
+    "Optimize9" : {
+        "time" : "6:00:00",
+        "mem" : 6000
+    },
+    "Optimize10" : {
+        "time" : "6:00:00",
+        "mem" : 6000
+    },
+    "Decode" : {
+        "time" : "100:00:00",
+        "mem" : 6000
+    },
+    "PlotPerformance" : {
+        "mem" : 60000
+    },
+    "ExportBarcodes" : {
+        "time" : "8:00:00",
+        "mem" : 50000
+    },
+    "ExportBarcodes_2" : {
+        "time" : "8:00:00",
+        "mem" : 50000
+    },
+    "WatershedSegment" : {
+        "mem": 3000
+    },
+    "GenerateAdaptiveThreshold" :{
+        "mem": 30000
+    },
+    "GenerateAdaptiveThreshold_2" :{
+        "mem": 30000
+    },
+    "AdaptiveFilterBarcodes" : {
+        "mem": 5000
+    },
+    "GenerateMosaic": {
+        "time": "100:00:00",
+        "mem": 100000,
+        "partition" : "unrestricted,shared"
+
+    },
+    "DeconvolutionPreprocess_IEG" : {
+        "time" : "2:00:00",
+        "mem" : 2000
+    },
+    "Optimize1_IEG" : {
+        "time" : "4:00:00",
+        "mem" : 6000
+    },
+    "Optimize2_IEG" : {
+        "time" : "4:00:00",
+        "mem" : 6000
+    },
+    "Optimize3_IEG" : {
+        "time" : "4:00:00",
+        "mem" : 6000
+    },
+    "Optimize4_IEG" : {
+        "time" : "4:00:00",
+        "mem" : 6000
+    },
+    "Optimize5_IEG" : {
+        "time" : "4:00:00",
+        "mem" : 6000
+    },
+    "Optimize6_IEG" : {
+        "time" : "4:00:00",
+        "mem" : 6000
+    },
+    "Optimize7_IEG" : {
+        "time" : "4:00:00",
+        "mem" : 6000
+    },
+    "Optimize8_IEG" : {
+        "time" : "4:00:00",
+        "mem" : 6000
+    },
+    "Optimize9_IEG" : {
+        "time" : "4:00:00",
+        "mem" : 6000
+    },
+    "Optimize10_IEG" : {
+        "time" : "4:00:00",
+        "mem" : 6000
+    },
+    "Decode_IEG" : {
+        "mem" : 6000
+    },
+    "GenerateAdaptiveThreshold_IEG" :{
+        "mem": 30000
+    },
+    "AdaptiveFilterBarcodes_IEG" : {
+        "mem": 30000
+    },
+    "PlotPerformance_IEG" : {
+        "mem" : 60000
+    },
+    "ExportBarcodes_IEG" : {
+        "time" : "8:00:00",
+        "mem" : 50000
+    }
+}

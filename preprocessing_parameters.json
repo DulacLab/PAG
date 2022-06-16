@@ -1,0 +1,6 @@
+{               
+	"highpass_sigma": 3,
+	"decon_sigma": 2,
+    "decon_iterations": 20,
+    "decon_filter_size": 9,
+}
